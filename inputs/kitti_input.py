@@ -120,7 +120,6 @@ def create_queues(hypes, phase):
         height = hypes['jitter']['image_height']
         width = hypes['jitter']['image_width']
         channel = hypes['arch']['num_channels']
-        num_classes = hypes['arch']['num_classes']
         shapes = [[height, width, channel],
                   [2]]
     else:

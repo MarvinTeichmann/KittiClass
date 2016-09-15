@@ -10,7 +10,6 @@ import os
 import numpy as np
 import scipy as scp
 import random
-from seg_utils import seg_utils as seg
 
 import tensorflow as tf
 import time

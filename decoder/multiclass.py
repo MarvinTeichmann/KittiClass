@@ -10,37 +10,135 @@ import os
 import numpy as np
 import scipy as scp
 import random
-from seg_utils import seg_utils as seg
 
 
 import tensorflow as tf
 
 
-def _build_overfeat_inner(hyp, lstm_input):
-    '''
-    build simple overfeat decoder
-    '''
-    if hyp['rnn_len'] > 1:
-        raise ValueError('rnn_len > 1 only supported with use_lstm == True')
-    outputs = []
-    initializer = tf.random_uniform_initializer(-0.1, 0.1)
-    with tf.variable_scope('Overfeat', initializer=initializer):
-        w = tf.get_variable('ip', shape=[hyp['cnn_channels'],
-                                         hyp['lstm_size']])
-        outputs.append(tf.matmul(lstm_input, w))
-    return outputs
+def _activation_summary(x):
+    """Helper to create summaries for activations.
+
+    Creates a summary that provides a histogram of activations.
+    Creates a summary that measure the sparsity of activations.
+
+    Args:
+      x: Tensor
+    Returns:
+      nothing
+    """
+    # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
+    # session. This helps the clarity of presentation on tensorboard.
+    tensor_name = x.op.name
+    # tensor_name = re.sub('%s_[0-9]*/' % TOWER_NAME, '', x.op.name)
+    tf.histogram_summary(tensor_name + '/activations', x)
+    tf.scalar_summary(tensor_name + '/sparsity', tf.nn.zero_fraction(x))
+
+
+def _bias_variable(shape, constant=0.0):
+    initializer = tf.constant_initializer(constant)
+    return tf.get_variable(name='biases', shape=shape, initializer=initializer)
+
+
+def _variable_with_weight_decay(shape, stddev, wd):
+    """Helper to create an initialized Variable with weight decay.
+
+    Note that the Variable is initialized with a truncated normal distribution.
+    A weight decay is added only if one is specified.
+
+    Parameters
+    ----------
+    name: name of the variable
+    shape: list of ints
+    stddev : float
+        Standard deviation of a truncated Gaussian.
+    wd: add L2Loss weight decay multiplied by this float. If None, weight
+      decay is not added for this variable.
+
+    Returns
+    -------
+    Variable Tensor
+    """
+    initializer = tf.truncated_normal_initializer(stddev=stddev)
+    var = tf.get_variable('weights', shape=shape,
+                          initializer=initializer)
+
+    if wd and (not tf.get_variable_scope().reuse):
+        weight_decay = tf.mul(tf.nn.l2_loss(var), wd, name='weight_loss')
+        tf.add_to_collection('losses', weight_decay)
+    return var
+
+
+def _conv_layer(name, bottom, num_filter,
+                ksize=[3, 3], strides=[1, 1, 1, 1], padding='SAME'):
+    with tf.variable_scope(name) as scope:
+        # get number of input channels
+        n = bottom.get_shape()[3].value
+        if n is None:
+            # if placeholder are used, n might be undefined
+            # this should only happen in the first layer.
+            # Assume RGB image in that case.
+            n = 3
+        shape = [ksize[0], ksize[1], n, num_filter]
+        num_input = ksize[0] * ksize[1] * n
+        stddev = (2 / num_input)**0.5
+        weights = _variable_with_weight_decay(shape, stddev, 5e-4)
+        bias = _bias_variable([num_filter], constant=0.0)
+        conv = tf.nn.conv2d(bottom, weights,
+                            strides=strides, padding=padding)
+        bias_layer = tf.nn.bias_add(conv, bias, name=scope.name)
+        relu = tf.nn.relu(bias_layer, name=scope.name)
+        _activation_summary(relu)
+    return relu
+
+
+def _fc_layer_with_dropout(bottom, name, size,
+                           train, wd=0.005, keep_prob=0.5):
+
+    with tf.variable_scope(name) as scope:
+        if not scope.reuse:
+            n1 = bottom.get_shape()[1].value
+            stddev = (2 / n1)**0.5
+        else:
+            n1 = None
+            stddev = 0.1
+        weights = _variable_with_weight_decay(shape=[n1, size],
+                                              stddev=stddev, wd=wd)
+        biases = _bias_variable([size])
+
+        fullc = tf.nn.relu_layer(bottom, weights, biases, name=scope.name)
+        _activation_summary(fullc)
+
+        # Adding Dropout
+        if train:
+            fullc = tf.nn.dropout(fullc, keep_prob, name='dropout')
+
+        return fullc
+
+
+def _logits(bottom, num_classes):
+    # Computing Softmax
+    with tf.variable_scope('logits') as scope:
+        n1 = bottom.get_shape()[1].value
+        stddev = (1 / n1)**0.5
+        weights = _variable_with_weight_decay(shape=[n1, num_classes],
+                                              stddev=stddev, wd=0.0)
+
+        biases = _bias_variable([num_classes])
+        logits = tf.add(tf.matmul(bottom, weights), biases, name=scope.name)
+        _activation_summary(logits)
+
+    return logits
 
 
 def _add_softmax(hypes, logits):
-    num_classes = hypes['arch']['num_classes']
     with tf.name_scope('decoder'):
-        logits = tf.reshape(logits, (-1, num_classes))
+        logits_road = logits[:, :2]
+        logits_cross = logits[:, 2:]
         epsilon = tf.constant(value=hypes['solver']['epsilon'])
-        logits = logits + epsilon
+        softmax_road = tf.nn.softmax(logits_road)
+        softmax_cross = tf.nn.softmax(logits_cross)
 
-        softmax = tf.nn.softmax(logits)
-
-    return softmax
+    return (softmax_road, softmax_cross)
 
 
 def decoder(hypes, logits, train):
@@ -53,9 +151,18 @@ def decoder(hypes, logits, train):
       logits: the logits are already decoded.
     """
     decoded_logits = {}
-    with tf.name_scope('loss'):
-        decoded_logits['logits'] = logits
-        decoded_logits['softmax'] = _add_softmax(hypes, logits)
+    down = hypes['down_score']
+    batch_size = hypes['solver']['batch_size']
+    with tf.name_scope('decoder'):
+        fc7 = down*logits['fc7']
+        conv8 = _conv_layer(name="conv8", bottom=fc7,
+                            num_filter=100, ksize=[1, 1])
+        conv8 = tf.reshape(conv8, [batch_size, -1])
+        fc_inner = _fc_layer_with_dropout(conv8, name="fc_inner",
+                                          size=100, train=train)
+        new_logits = _logits(fc_inner, 4)
+        decoded_logits['logits'] = new_logits
+        decoded_logits['softmax'] = _add_softmax(hypes, new_logits)
     return decoded_logits
 
 
@@ -71,67 +178,22 @@ def loss(hypes, decoded_logits, labels):
     """
     logits = decoded_logits['logits']
     with tf.name_scope('loss'):
-        logits = tf.reshape(logits, (-1, 2))
-        shape = [logits.get_shape()[0], 2]
-        epsilon = tf.constant(value=hypes['solver']['epsilon'])
-        logits = logits + epsilon
-        labels = tf.to_float(tf.reshape(labels, (-1, 2)))
-
-        softmax = tf.nn.softmax(logits)
+        logits_road = logits[:, :2]
+        logits_cross = logits[:, 2:]
+        road_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits_road, labels[:, 0], name="Road_loss")
+        cross_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits_cross, labels[:, 1], name="Road_loss")
 
         weight_loss = tf.add_n(tf.get_collection('losses'), name='total_loss')
 
-        if hypes['loss'] == 'xentropy':
-            cross_entropy_mean = _compute_cross_entropy_mean(hypes, labels,
-                                                             softmax)
-        elif hypes['loss'] == 'softF1':
-            cross_entropy_mean = _compute_f1(hypes, labels, softmax, epsilon)
-
-        elif hypes['loss'] == 'softIU':
-            cross_entropy_mean = _compute_soft_ui(hypes, labels, softmax,
-                                                  epsilon)
-
         losses = {}
-        losses['total_loss'] = weight_loss + cross_entropy_mean
-        losses['xentropy'] = cross_entropy_mean
+        losses['total_loss'] = weight_loss + road_loss + cross_loss
+        losses['road_loss'] = road_loss
+        losses['road_loss'] = cross_loss
         losses['weight_loss'] = weight_loss
 
     return losses
-
-
-def _compute_cross_entropy_mean(hypes, labels, softmax):
-    head = hypes['arch']['weight']
-    cross_entropy = -tf.reduce_sum(tf.mul(labels * tf.log(softmax), head),
-                                   reduction_indices=[1])
-
-    cross_entropy_mean = tf.reduce_mean(cross_entropy,
-                                        name='xentropy_mean')
-    return cross_entropy_mean
-
-
-def _compute_f1(hypes, labels, softmax, epsilon):
-    labels = tf.to_float(tf.reshape(labels, (-1, 2)))[:, 1]
-    logits = softmax[:, 1]
-    true_positive = tf.reduce_sum(labels*logits)
-    false_positive = tf.reduce_sum((1-labels)*logits)
-
-    recall = true_positive / tf.reduce_sum(labels)
-    precision = true_positive / (true_positive + false_positive + epsilon)
-
-    score = 2*recall * precision / (precision + recall)
-    f1_score = 1 - 2*recall * precision / (precision + recall)
-
-    return f1_score
-
-
-def _compute_soft_ui(hypes, labels, softmax, epsilon):
-    intersection = tf.reduce_sum(labels*softmax, reduction_indices=0)
-    union = tf.reduce_sum(labels+softmax, reduction_indices=0) \
-        - intersection+epsilon
-
-    mean_iou = 1-tf.reduce_mean(intersection/union, name='mean_iou')
-
-    return mean_iou
 
 
 def evaluation(hyp, images, labels, decoded_logits, losses, global_step):
@@ -151,21 +213,15 @@ def evaluation(hyp, images, labels, decoded_logits, losses, global_step):
     # the examples where the label's is was in the top k (here k=1)
     # of all logits for that example.
     eval_list = []
-    logits = tf.reshape(decoded_logits['logits'], (-1, 2))
-    labels = tf.reshape(labels, (-1, 2))
+    logits_road = decoded_logits['logits'][:, :2]
+    logits_cross = decoded_logits['logits'][:, 2:]
+    correct_road = tf.nn.in_top_k(logits_road, labels[:, 0], 1)
+    correct_cross = tf.nn.in_top_k(logits_road, labels[:, 1], 1)
 
-    pred = tf.argmax(logits, dimension=1)
-
-    negativ = tf.to_int32(tf.equal(pred, 0))
-    tn = tf.reduce_sum(negativ*labels[:, 0])
-    fn = tf.reduce_sum(negativ*labels[:, 1])
-
-    positive = tf.to_int32(tf.equal(pred, 1))
-    tp = tf.reduce_sum(positive*labels[:, 1])
-    fp = tf.reduce_sum(positive*labels[:, 0])
-
-    eval_list.append(('Acc. ', (tn+tp)/(tn + fn + tp + fp)))
-    eval_list.append(('xentropy', losses['xentropy']))
+    eval_list.append(('Acc. Road ', correct_road))
+    eval_list.append(('Acc. Coss ', correct_cross))
+    eval_list.append(('road_loss', losses['road_loss']))
+    eval_list.append(('weight_loss', losses['weight_loss']))
     eval_list.append(('weight_loss', losses['weight_loss']))
 
     # eval_list.append(('Precision', tp/(tp + fp)))
