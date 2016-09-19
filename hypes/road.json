@@ -2,7 +2,7 @@
   "model": {
     "input_file": "../inputs/kitti_input.py",
     "architecture_file" : "../encoder/vgg.py",
-    "objective_file" : "../decoder/multiclass.py",
+    "objective_file" : "../decoder/multiclass2.py",
     "optimizer_file" : "../optimizer/generic_optimizer.py",
     "evaluator_file" : "../evals/road_eval.py"
   },
@@ -15,6 +15,8 @@
  
   "arch": {
     "num_channels" : 3,
+    "inner_channels" : 300,
+    "deep_channels" : 512,
     "whitening": false
   },
 
@@ -23,14 +25,14 @@
     "image_height" : 384,
     "image_width" : 1248,
 
-    "augment_level": 1
+    "augment_level": 0
 
   },
 
   "logging": {
-    "display_iter": 20,
-    "eval_iter": 100,
-    "write_iter": 100,
+    "display_iter": 40,
+    "eval_iter": 200,
+    "write_iter": 1000,
     "save_iter": 2000,
     "image_iter": 10000
   },
@@ -44,6 +46,10 @@
       "learning_rate_step": null,
       "max_steps": 22000
   },
+  "use_fcn": false,
+  "use_fc": true,
+  "grid_width": 39,
+  "grid_height": 12,
   "clip_norm" : 1.0,
   "wd": 5e-4,
   "down_score": 0.01

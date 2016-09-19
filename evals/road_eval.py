@@ -15,99 +15,108 @@ import tensorflow as tf
 import time
 
 
-def eval_image(hypes, gt_image, cnn_image):
-    """."""
-    thresh = np.array(range(0, 256))/255.0
-    road_gt = gt_image[:, :, 2] > 0
-    valid_gt = gt_image[:, :, 0] > 0
+def eval_res(hypes, labels, output, loss):
+    index = {'road': 0, 'cross': 1}[loss]
+    pos_num = 0
+    neg_num = 0
+    fn = 0
+    fp = 0
+    if(labels[index] == '0'):
+        neg_num = 1
+        if(np.argmax(output[index]) == 1):
+            fp = 1
+    else:
+        pos_num = 1
+        if(np.argmax(output[index]) == 0):
+            fn = 1
 
-    FN, FP, posNum, negNum = seg.evalExp(road_gt, cnn_image,
-                                         thresh, validMap=None,
-                                         validArea=valid_gt)
-
-    return FN, FP, posNum, negNum
+    return fn, fp, pos_num, neg_num
 
 
 def evaluate(hypes, sess, image_pl, inf_out):
 
-    softmax = inf_out['softmax']
+    softmax_road, softmax_cross = inf_out['softmax']
     data_dir = hypes['dirs']['data_dir']
     data_file = hypes['data']['val_file']
     data_file = os.path.join(data_dir, data_file)
     image_dir = os.path.dirname(data_file)
 
-    thresh = np.array(range(0, 256))/255.0
-    total_fp = np.zeros(thresh.shape)
-    total_fn = np.zeros(thresh.shape)
-    total_posnum = 0
-    total_negnum = 0
+    total_fp = {}
+    total_fn = {}
+    total_posnum = {}
+    total_negnum = {}
+    for loss in ['road', 'cross']:
+        total_fp[loss] = 0
+        total_fn[loss] = 0
+        total_posnum[loss] = 0
+        total_negnum[loss] = 0
 
     image_list = []
 
     with open(data_file) as file:
         for i, datum in enumerate(file):
-                datum = datum.rstrip()
-                image_file, gt_file = datum.split(" ")
-                image_file = os.path.join(image_dir, image_file)
-                gt_file = os.path.join(image_dir, gt_file)
+            datum = datum.rstrip()
+            image_file, road_type, crossing = datum.split(" ")
+            labels = (road_type, crossing)
+            image_file = os.path.join(image_dir, image_file)
 
-                image = scp.misc.imread(image_file)
+            image = scp.misc.imread(image_file)
 
-                if hypes['jitter']['fix_shape']:
-                    shape = image.shape
-                    image_height = hypes['jitter']['image_height']
-                    image_width = hypes['jitter']['image_width']
-                    assert(image_height >= shape[0])
-                    assert(image_width >= shape[1])
+            if hypes['jitter']['fix_shape']:
+                shape = image.shape
+                image_height = hypes['jitter']['image_height']
+                image_width = hypes['jitter']['image_width']
+                assert(image_height >= shape[0])
+                assert(image_width >= shape[1])
 
-                    offset_x = (image_height - shape[0])//2
-                    offset_y = (image_width - shape[1])//2
-                    new_image = np.zeros([image_height, image_width, 3])
-                    new_image[offset_x:offset_x+shape[0],
-                              offset_y:offset_y+shape[1]] = image
-                    input_image = new_image
-                else:
-                    input_image = image
+                offset_x = (image_height - shape[0])//2
+                offset_y = (image_width - shape[1])//2
+                new_image = np.zeros([image_height, image_width, 3])
+                new_image[offset_x:offset_x+shape[0],
+                          offset_y:offset_y+shape[1]] = image
+                input_image = new_image
+            else:
+                input_image = image
 
-                shape = input_image.shape
+            shape = input_image.shape
 
-                gt_image = scp.misc.imread(gt_file)
-                feed_dict = {image_pl: input_image}
+            feed_dict = {image_pl: input_image}
 
-                output = sess.run([softmax], feed_dict=feed_dict)
-                output_im = output[0][:, 1].reshape(shape[0], shape[1])
+            output = sess.run([softmax_road, softmax_cross],
+                              feed_dict=feed_dict)
 
-                if hypes['jitter']['fix_shape']:
-                    gt_shape = gt_image.shape
-                    output_im = output_im[offset_x:offset_x+gt_shape[0],
-                                          offset_y:offset_y+gt_shape[1]]
+            for loss in ['road', 'cross']:
 
-                if i % 5 == 0:
-                    ov_image = seg.make_overlay(image, output_im)
-                    name = os.path.basename(image_file)
-                    image_list.append((name, ov_image))
+                FN, FP, posNum, negNum = eval_res(hypes, labels, output,
+                                                  loss)
 
-                FN, FP, posNum, negNum = eval_image(hypes, gt_image, output_im)
-
-                total_fp += FP
-                total_fn += FN
-                total_posnum += posNum
-                total_negnum += negNum
-
-    eval_dict = seg.pxEval_maximizeFMeasure(total_posnum, total_negnum,
-                                            total_fn, total_fp,
-                                            thresh=thresh)
+                total_fp[loss] += FP
+                total_fn[loss] += FN
+                total_posnum[loss] += posNum
+                total_negnum[loss] += negNum
 
     start_time = time.time()
     for i in xrange(10):
-        sess.run([softmax], feed_dict=feed_dict)
+        sess.run([softmax_road, softmax_cross], feed_dict=feed_dict)
     dt = (time.time() - start_time)/10
+
+    accuricy = {}
+    precision = {}
+    recall = {}
+
+    for loss in ['road', 'cross']:
+        tp = total_posnum[loss] - total_fn[loss]
+        tn = total_negnum[loss] - total_fp[loss]
+        accuricy[loss] = (tp + tn) / (total_posnum[loss] + total_negnum[loss])
+        precision[loss] = tp / (tp + total_fp[loss] + 0.000001)
+        recall[loss] = tp / (total_posnum[loss] + 0.000001)
 
     eval_list = []
 
-    eval_list.append(('MaxF1', 100*eval_dict['MaxF']))
-    eval_list.append(('BestThresh', 100*eval_dict['BestThresh']))
-    eval_list.append(('Average Precision', 100*eval_dict['AvgPrec']))
+    for loss in ['road', 'cross']:
+        eval_list.append(('%s  Accuricy' % loss, 100*accuricy[loss]))
+        eval_list.append(('%s  Precision' % loss, 100*precision[loss]))
+        eval_list.append(('%s  Recall' % loss, 100*recall[loss]))
     eval_list.append(('Speed (msec)', 1000*dt))
     eval_list.append(('Speed (fps)', 1/dt))
 

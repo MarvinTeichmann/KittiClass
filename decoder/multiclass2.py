@@ -122,9 +122,9 @@ def _logits(bottom, num_classes):
         stddev = (1 / n1)**0.5
         weights = _variable_with_weight_decay(shape=[n1, num_classes],
                                               stddev=stddev, wd=0.0)
-
-        biases = _bias_variable([num_classes])
-        logits = tf.add(tf.matmul(bottom, weights), biases, name=scope.name)
+        logits = tf.matmul(bottom, weights, name=scope.name)
+        bias = _bias_variable([num_classes])
+        logits = tf.nn.bias_add(logits, bias)
         _activation_summary(logits)
 
     return logits
@@ -141,6 +141,26 @@ def _add_softmax(hypes, logits):
     return (softmax_road, softmax_cross)
 
 
+def _build_decoder_inner(hyp, decoder_input):
+    '''
+    build simple overfeat decoder
+    '''
+    grid_size = hyp['grid_width'] * hyp['grid_height']
+    outer_size = grid_size * hyp['solver']['batch_size']
+    arch = hyp['arch']
+    with tf.variable_scope('decoder_inner') as scope:
+        decoder_input = tf.reshape(decoder_input,
+                                   [outer_size, arch['deep_channels']])
+        shape = [arch['deep_channels'], arch['inner_channels']]
+        stddev = 0.05
+        weights = _variable_with_weight_decay(shape, stddev, 5e-4)
+        bias = _bias_variable(arch['inner_channels'])
+
+        inner = tf.nn.relu_layer(decoder_input, weights, bias, name=scope.name)
+        _activation_summary(inner)
+    return inner
+
+
 def decoder(hypes, logits, train):
     """Apply decoder to the logits.
 
@@ -154,15 +174,18 @@ def decoder(hypes, logits, train):
     down = hypes['down_score']
     batch_size = hypes['solver']['batch_size']
     with tf.name_scope('decoder'):
-        fc7 = down*logits['fc7']
-        conv8 = _conv_layer(name="conv8", bottom=fc7,
-                            num_filter=100, ksize=[1, 1])
-        conv8 = tf.reshape(conv8, [batch_size, -1])
-        fc_inner = _fc_layer_with_dropout(conv8, name="fc_inner",
-                                          size=100, train=train)
-        import ipdb
-        ipdb.set_trace()
-        new_logits = _logits(fc_inner, 4)
+        if hypes['use_fcn']:
+            fc7 = down*logits['fc7']
+        else:
+            fc7 = down*logits['deep_feat']
+        inner = _build_decoder_inner(hypes, fc7)
+        if hypes["use_fc"]:
+            inner = _fc_layer_with_dropout(inner, name="fc_inner",
+                                           size=100, train=train)
+        elif train:
+            inner = tf.nn.dropout(inner, 0.5)
+        inner = tf.reshape(inner, [batch_size, -1])
+        new_logits = _logits(inner, 4)
         decoded_logits['logits'] = new_logits
         decoded_logits['softmax'] = _add_softmax(hypes, new_logits)
     return decoded_logits

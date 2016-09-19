@@ -84,8 +84,6 @@ def _make_data_gen(hypes, phase, data_dir):
 def jitter_input(hypes, image, label):
 
     jitter = hypes['jitter']
-    res_chance = jitter['res_chance']
-    crop_chance = jitter['crop_chance']
 
     if jitter['fix_shape']:
         image_height = jitter['image_height']
@@ -220,6 +218,12 @@ def _processe_image(hypes, image):
     return image
 
 
+def _dequeue_and_processed_image(hypes, q):
+    image, label = q.dequeue()
+    image = _processe_image(hypes, image)
+    return image, label
+
+
 def inputs(hypes, q, phase):
     """Generate Inputs images."""
     if phase == 'val':
@@ -232,10 +236,16 @@ def inputs(hypes, q, phase):
         image.set_shape([None, None, 3])
         image = tf.expand_dims(image, 0)
         label = tf.expand_dims(label, 0)
+        _processe_image(hypes, image)
     else:
-        image, label = q.dequeue_many(hypes['solver']['batch_size'])
-
-    image = _processe_image(hypes, image)
+        num_threads = hypes['solver']['threads']
+        batch_size = hypes['solver']['batch_size']
+        minad = 5
+        capacity = minad + 5*batch_size
+        example_list = [_dequeue_and_processed_image(hypes, q)
+                        for i in xrange(num_threads)]
+        image, label = tf.train.shuffle_batch_join(
+            example_list, batch_size, capacity, minad)
 
     # Display the training images in the visualizer.
     tensor_name = image.op.name
