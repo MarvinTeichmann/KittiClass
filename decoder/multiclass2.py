@@ -185,7 +185,11 @@ def decoder(hypes, logits, train):
         elif train:
             inner = tf.nn.dropout(inner, 0.5)
         inner = tf.reshape(inner, [batch_size, -1])
-        new_logits = _logits(inner, 4)
+        if hypes["only_road"]:
+            num_classes = hypes["road_classes"]
+        else:
+            num_classes = hypes["road_classes"] + 2
+        new_logits = _logits(inner, num_classes)
         decoded_logits['logits'] = new_logits
         decoded_logits['softmax'] = _add_softmax(hypes, new_logits)
     return decoded_logits
@@ -203,24 +207,31 @@ def loss(hypes, decoded_logits, labels):
     """
     logits = decoded_logits['logits']
     with tf.name_scope('loss'):
-        logits_road = logits[:, :2]
-        logits_cross = logits[:, 2:]
+        road_classes = hypes["road_classes"]
+        logits_road = logits[:, :road_classes]
         road_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
             logits_road, labels[:, 0], name="road_loss")
         road_loss = tf.reduce_mean(road_loss,
                                    name='road_loss_mean')
 
-        cross_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            logits_cross, labels[:, 1], name="road_loss")
-        cross_loss = tf.reduce_mean(cross_loss,
-                                    name='cross_loss_mean')
+        if not hypes["only_road"]:
+            logits_cross = logits[:, 2:]
+            cross_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
+                logits_cross, labels[:, 1], name="road_loss")
+            cross_loss = tf.reduce_mean(cross_loss,
+                                        name='cross_loss_mean')
+            loss = road_loss + cross_loss
+        else:
+            loss = road_loss
 
         weight_loss = tf.add_n(tf.get_collection('losses'), name='total_loss')
 
         losses = {}
-        losses['total_loss'] = weight_loss + road_loss + cross_loss
+        losses['total_loss'] = loss+weight_loss
         losses['road_loss'] = road_loss
-        losses['cross_loss'] = cross_loss
+        losses['loss'] = loss
+        if not hypes["only_road"]:
+            losses['cross_loss'] = cross_loss
         losses['weight_loss'] = weight_loss
 
     return losses
@@ -243,17 +254,21 @@ def evaluation(hyp, images, labels, decoded_logits, losses, global_step):
     # the examples where the label's is was in the top k (here k=1)
     # of all logits for that example.
     eval_list = []
-    logits_road = decoded_logits['logits'][:, :2]
-    logits_cross = decoded_logits['logits'][:, 2:]
+    road_classes = hyp["road_classes"]
+    logits_road = decoded_logits['logits'][:, :road_classes]
     correct_road = tf.nn.in_top_k(logits_road, labels[:, 0], 1)
     acc_road = tf.reduce_sum(tf.cast(correct_road, tf.int32))
-    correct_cross = tf.nn.in_top_k(logits_cross, labels[:, 1], 1)
-    acc_cross = tf.reduce_sum(tf.cast(correct_cross, tf.int32))
+
+    if not hyp["only_road"]:
+        logits_cross = decoded_logits['logits'][:, 2:]
+        correct_cross = tf.nn.in_top_k(logits_cross, labels[:, 1], 1)
+        acc_cross = tf.reduce_sum(tf.cast(correct_cross, tf.int32))
 
     eval_list.append(('Acc. Road ', acc_road))
-    eval_list.append(('Cross ', acc_cross))
     eval_list.append(('Loss road', losses['road_loss']))
-    eval_list.append(('cross', losses['cross_loss']))
+    if not hyp["only_road"]:
+        eval_list.append(('Cross ', acc_cross))
+        eval_list.append(('cross', losses['cross_loss']))
     eval_list.append(('l2', losses['weight_loss']))
 
     # eval_list.append(('Precision', tp/(tp + fp)))

@@ -41,11 +41,16 @@ def evaluate(hypes, sess, image_pl, inf_out):
     data_file = os.path.join(data_dir, data_file)
     image_dir = os.path.dirname(data_file)
 
+    if hypes["only_road"]:
+        model_list = ['road']
+    else:
+        model_list = ['road', 'cross']
+
     total_fp = {}
     total_fn = {}
     total_posnum = {}
     total_negnum = {}
-    for loss in ['road', 'cross']:
+    for loss in model_list:
         total_fp[loss] = 0
         total_fn[loss] = 0
         total_posnum[loss] = 0
@@ -85,7 +90,7 @@ def evaluate(hypes, sess, image_pl, inf_out):
             output = sess.run([softmax_road, softmax_cross],
                               feed_dict=feed_dict)
 
-            for loss in ['road', 'cross']:
+            for loss in model_list:
 
                 FN, FP, posNum, negNum = eval_res(hypes, labels, output,
                                                   loss)
@@ -104,7 +109,7 @@ def evaluate(hypes, sess, image_pl, inf_out):
     precision = {}
     recall = {}
 
-    for loss in ['road', 'cross']:
+    for loss in model_list:
         tp = total_posnum[loss] - total_fn[loss]
         tn = total_negnum[loss] - total_fp[loss]
         accuricy[loss] = (tp + tn) / (total_posnum[loss] + total_negnum[loss])
@@ -113,7 +118,7 @@ def evaluate(hypes, sess, image_pl, inf_out):
 
     eval_list = []
 
-    for loss in ['road', 'cross']:
+    for loss in model_list:
         eval_list.append(('%s  Accuricy' % loss, 100*accuricy[loss]))
         eval_list.append(('%s  Precision' % loss, 100*precision[loss]))
         eval_list.append(('%s  Recall' % loss, 100*recall[loss]))
