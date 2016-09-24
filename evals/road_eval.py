@@ -60,6 +60,8 @@ def evaluate(hypes, sess, image_pl, inf_out):
 
     with open(data_file) as file:
         for i, datum in enumerate(file):
+            if random.random() > 0.3:
+                continue
             datum = datum.rstrip()
             image_file, road_type, crossing = datum.split(" ")
             labels = (road_type, crossing)
