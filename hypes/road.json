@@ -44,7 +44,7 @@
       "threads": 4,
       "learning_rate": 1e-5,
       "learning_rate_step": null,
-      "max_steps": 22000
+      "max_steps": 18000
   },
   "use_fcn": false,
   "use_fc": true,
