@@ -15,8 +15,8 @@
  
   "arch": {
     "num_channels" : 3,
-    "inner_channels" : 100,
-    "deep_channels" : 4096,
+    "inner_channels" : 300,
+    "deep_channels" : 512,
     "whitening": false
   },
 
@@ -46,7 +46,7 @@
       "learning_rate_step": null,
       "max_steps": 22000
   },
-  "use_fcn": true,
+  "use_fcn": false,
   "use_fc": true,
   "only_road": true,
   "road_classes": 2,
