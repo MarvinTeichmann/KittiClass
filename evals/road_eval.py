@@ -34,10 +34,45 @@ def eval_res(hypes, labels, output, loss):
 
 
 def evaluate(hypes, sess, image_pl, inf_out):
+    if hypes["only_road"]:
+        model_list = ['road']
+    else:
+        model_list = ['road', 'cross']
+
+    val = evaluate_data(hypes, sess, image_pl, inf_out, validation=True)
+    train = evaluate_data(hypes, sess, image_pl, inf_out, validation=False)
+
+    eval_list = []
+
+    for loss in model_list:
+        eval_list.append(('%s  val Accuricy' % loss,
+                          100*val['accuricy'][loss]))
+        eval_list.append(('%s  val Precision' % loss,
+                          100*val['precision'][loss]))
+        eval_list.append(('%s  val Recall' % loss,
+                          100*val['recall'][loss]))
+        eval_list.append(('%s  train Accuricy' % loss,
+                          100*train['accuricy'][loss]))
+        eval_list.append(('%s  train Precision' % loss,
+                          100*train['precision'][loss]))
+        eval_list.append(('%s  train Recall' % loss,
+                          100*train['recall'][loss]))
+    eval_list.append(('Speed (msec)', 1000*val['dt']))
+    eval_list.append(('Speed (fps)', 1/val['dt']))
+
+    image_list = []
+
+    return eval_list, image_list
+
+
+def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
 
     softmax_road, softmax_cross = inf_out['softmax']
     data_dir = hypes['dirs']['data_dir']
-    data_file = hypes['data']['val_file']
+    if validation is True:
+        data_file = hypes['data']['val_file']
+    else:
+        data_file = hypes['data']['train_file']
     data_file = os.path.join(data_dir, data_file)
     image_dir = os.path.dirname(data_file)
 
@@ -55,8 +90,6 @@ def evaluate(hypes, sess, image_pl, inf_out):
         total_fn[loss] = 0
         total_posnum[loss] = 0
         total_negnum[loss] = 0
-
-    image_list = []
 
     with open(data_file) as file:
         for i, datum in enumerate(file):
@@ -102,10 +135,13 @@ def evaluate(hypes, sess, image_pl, inf_out):
                 total_posnum[loss] += posNum
                 total_negnum[loss] += negNum
 
-    start_time = time.time()
-    for i in xrange(10):
-        sess.run([softmax_road, softmax_cross], feed_dict=feed_dict)
-    dt = (time.time() - start_time)/10
+    if validation:
+        start_time = time.time()
+        for i in xrange(10):
+            sess.run([softmax_road, softmax_cross], feed_dict=feed_dict)
+        dt = (time.time() - start_time)/10
+    else:
+        dt = None
 
     accuricy = {}
     precision = {}
@@ -118,13 +154,5 @@ def evaluate(hypes, sess, image_pl, inf_out):
         precision[loss] = tp / (tp + total_fp[loss] + 0.000001)
         recall[loss] = tp / (total_posnum[loss] + 0.000001)
 
-    eval_list = []
-
-    for loss in model_list:
-        eval_list.append(('%s  Accuricy' % loss, 100*accuricy[loss]))
-        eval_list.append(('%s  Precision' % loss, 100*precision[loss]))
-        eval_list.append(('%s  Recall' % loss, 100*recall[loss]))
-    eval_list.append(('Speed (msec)', 1000*dt))
-    eval_list.append(('Speed (fps)', 1/dt))
-
-    return eval_list, image_list
+    return {'accuricy': accuricy, 'precision': precision,
+            'recall': recall, 'dt': dt}
