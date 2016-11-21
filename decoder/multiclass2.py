@@ -180,8 +180,9 @@ def decoder(hypes, logits, train):
             fc7 = down*logits['deep_feat']
         inner = _build_decoder_inner(hypes, fc7)
         if hypes["use_fc"]:
+            size = hypes["arch"]["inner_channels"]
             inner = _fc_layer_with_dropout(inner, name="fc_inner",
-                                           size=100, train=train)
+                                           size=size, train=train)
         elif train:
             inner = tf.nn.dropout(inner, 0.5)
         inner = tf.reshape(inner, [batch_size, -1])

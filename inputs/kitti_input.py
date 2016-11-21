@@ -80,10 +80,27 @@ def _make_data_gen(hypes, phase, data_dir):
 
             yield jitter_input(hypes, np.fliplr(image), label)
 
+            if not hypes['jitter']["flip"]:
+                continue
+
+            yield jitter_input(hypes, np.flipud(image), label)
+
+            yield jitter_input(hypes, np.fliplr(np.flipud(image)), label)
+
 
 def jitter_input(hypes, image, label):
 
     jitter = hypes['jitter']
+
+    jitter = hypes['jitter']
+    res_chance = jitter['res_chance']
+
+    if jitter['random_resize'] and res_chance > random.random():
+        lower_size = jitter['lower_size']
+        upper_size = jitter['upper_size']
+        sig = jitter['sig']
+        image, random_resize(image, lower_size, upper_size, sig)
+        image = crop_to_size(hypes, image)
 
     if jitter['fix_shape']:
         image_height = jitter['image_height']
@@ -91,6 +108,64 @@ def jitter_input(hypes, image, label):
         image = resize_image(image, image_height, image_width)
 
     return image, label
+
+
+def random_resize(image, lower_size, upper_size, sig):
+    factor = random.normalvariate(1, sig)
+    if factor < lower_size:
+        factor = lower_size
+    if factor > upper_size:
+        factor = upper_size
+    image = scipy.misc.imresize(image, factor)
+    return image
+
+
+def crop_to_size(hypes, image):
+    new_width = image.shape[1]
+    new_height = image.shape[0]
+    width = hypes['jitter']['image_width']
+    height = hypes['jitter']['image_height']
+    if new_width > width or new_height > height:
+        max_x = max(new_height-height, 0)
+        max_y = max(new_width-width, 0)
+        offset_x = random.randint(0, max_x)
+        offset_y = random.randint(0, max_y)
+        image = image[offset_x:offset_x+height, offset_y:offset_y+width]
+
+    return image
+
+
+def random_crop(image, gt_image, max_crop):
+    offset_x = random.randint(1, max_crop)
+    offset_y = random.randint(1, max_crop)
+
+    if random.random() > 0.5:
+        image = image[offset_x:, offset_y:, :]
+        gt_image = gt_image[offset_x:, offset_y:, :]
+    else:
+        image = image[:-offset_x, :-offset_y, :]
+        gt_image = gt_image[:-offset_x, :-offset_y, :]
+
+    return image, gt_image
+
+
+def resize_label_image_with_pad(image, label, image_height, image_width):
+    shape = image.shape
+    assert(image_height >= shape[0])
+    assert(image_width >= shape[1])
+
+    pad_height = image_height - shape[0]
+    pad_width = image_width - shape[1]
+    offset_x = random.randint(0, pad_height)
+    offset_y = random.randint(0, pad_width)
+
+    new_image = np.zeros([image_height, image_width, 3])
+    new_image[offset_x:offset_x+shape[0], offset_y:offset_y+shape[1]] = image
+
+    new_label = np.zeros([image_height, image_width, 2])
+    new_label[offset_x:offset_x+shape[0], offset_y:offset_y+shape[1]] = label
+
+    return new_image, new_label
 
 
 def resize_image(image, image_height, image_width):
