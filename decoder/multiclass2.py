@@ -30,8 +30,8 @@ def _activation_summary(x):
     # session. This helps the clarity of presentation on tensorboard.
     tensor_name = x.op.name
     # tensor_name = re.sub('%s_[0-9]*/' % TOWER_NAME, '', x.op.name)
-    tf.histogram_summary(tensor_name + '/activations', x)
-    tf.scalar_summary(tensor_name + '/sparsity', tf.nn.zero_fraction(x))
+    tf.summary.histogram(tensor_name + '/activations', x)
+    tf.summary.scalar(tensor_name + '/sparsity', tf.nn.zero_fraction(x))
 
 
 def _bias_variable(shape, constant=0.0):
@@ -63,7 +63,7 @@ def _variable_with_weight_decay(shape, stddev, wd):
                           initializer=initializer)
 
     if wd and (not tf.get_variable_scope().reuse):
-        weight_decay = tf.mul(tf.nn.l2_loss(var), wd, name='weight_loss')
+        weight_decay = tf.multiply(tf.nn.l2_loss(var), wd, name='weight_loss')
         tf.add_to_collection('losses', weight_decay)
     return var
 
@@ -211,14 +211,14 @@ def loss(hypes, decoded_logits, labels):
         road_classes = hypes["road_classes"]
         logits_road = logits[:, :road_classes]
         road_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
-            logits_road, labels[:, 0], name="road_loss")
+            logits=logits_road, labels=labels[:, 0], name="road_loss")
         road_loss = tf.reduce_mean(road_loss,
                                    name='road_loss_mean')
 
         if not hypes["only_road"]:
             logits_cross = logits[:, 2:]
             cross_loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
-                logits_cross, labels[:, 1], name="road_loss")
+                logits=logits_cross, labels=labels[:, 1], name="road_loss")
             cross_loss = tf.reduce_mean(cross_loss,
                                         name='cross_loss_mean')
             loss = road_loss + cross_loss

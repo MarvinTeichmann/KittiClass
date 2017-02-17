@@ -28,6 +28,8 @@ from tensorflow.python.training import queue_runner
 from tensorflow.python.ops import data_flow_ops
 from tensorflow.python.framework import dtypes
 
+import threading
+
 
 logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s',
                     level=logging.INFO,
@@ -200,7 +202,7 @@ def create_queues(hypes, phase):
 
     capacity = 50
     q = tf.FIFOQueue(capacity=50, dtypes=dtypes, shapes=shapes)
-    tf.scalar_summary("queue/%s/fraction_of_%d_full" %
+    tf.summary.scalar("queue/%s/fraction_of_%d_full" %
                       (q.name + "_" + phase, capacity),
                       math_ops.cast(q.size(), tf.float32) * (1. / capacity))
 
@@ -231,9 +233,8 @@ def start_enqueuing_threads(hypes, q, phase, sess):
     else:
         num_threads = 1
     for i in range(num_threads):
-        t = tf.train.threading.Thread(target=enqueue_loop,
-                                      args=(sess, enqueue_op,
-                                            phase, gen))
+        t = threading.Thread(target=enqueue_loop,
+                             args=(sess, enqueue_op, phase, gen))
         t.daemon = True
         t.start()
 
@@ -272,7 +273,7 @@ def shuffle_join(tensor_list_list, capacity,
     summary_name = (
         "queue/%s/fraction_over_%d_of_%d_full" %
         (name + '_' + phase, min_ad, capacity - min_ad))
-    tf.scalar_summary(summary_name, full)
+    tf.summary.scalar(summary_name, full)
 
     dequeued = queue.dequeue(name='shuffel_deqeue')
     # dequeued = _deserialize_sparse_tensors(dequeued, sparse_info)
@@ -324,7 +325,7 @@ def inputs(hypes, q, phase):
 
     # Display the training images in the visualizer.
     tensor_name = image.op.name
-    tf.image_summary(tensor_name + '/image', image)
+    tf.summary.image(tensor_name + '/image', image)
 
     return image, label
 
@@ -347,7 +348,7 @@ def main():
 
     with tf.Session() as sess:
         # Run the Op to initialize the variables.
-        init = tf.initialize_all_variables()
+        init = tf.global_variables_initializer()
         sess.run(init)
         coord = tf.train.Coordinator()
         start_enqueuing_threads(hypes, q, sess, data_dir)
