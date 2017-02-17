@@ -14,6 +14,32 @@ import random
 import tensorflow as tf
 import time
 
+from PIL import Image, ImageDraw, ImageFont
+
+
+def road_draw(image, highway):
+    im = Image.fromarray(image.astype('uint8'))
+    draw = ImageDraw.Draw(im)
+
+    fnt = ImageFont.truetype('FreeMono/FreeMonoBold.ttf', 40)
+
+    shape = image.shape
+
+    if highway:
+        draw.text((65, 10), "Highway",
+                  font=fnt, fill=(255, 255, 0, 255))
+
+        draw.ellipse([10, 10, 55, 55], fill=(255, 255, 0, 255),
+                     outline=(255, 255, 0, 255))
+    else:
+        draw.text((65, 10), "small road",
+                  font=fnt, fill=(255, 0, 0, 255))
+
+        draw.ellipse([10, 10, 55, 55], fill=(255, 0, 0, 255),
+                     outline=(255, 0, 0, 255))
+
+    return np.array(im).astype('float32')
+
 
 def eval_res(hypes, labels, output, loss):
     index = {'road': 0, 'cross': 1}[loss]
@@ -60,15 +86,14 @@ def evaluate(hypes, sess, image_pl, inf_out):
     eval_list.append(('Speed (msec)', 1000*val['dt']))
     eval_list.append(('Speed (fps)', 1/val['dt']))
 
-    image_list = []
-
-    return eval_list, image_list
+    return eval_list, val['image_list']
 
 
 def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
 
     softmax_road, softmax_cross = inf_out['softmax']
     data_dir = hypes['dirs']['data_dir']
+    image_list = []
     if validation is True:
         data_file = hypes['data']['val_file']
     else:
@@ -93,12 +118,13 @@ def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
 
     with open(data_file) as file:
         for i, datum in enumerate(file):
-            if random.random() > 0.3:
-                continue
             datum = datum.rstrip()
             image_file, road_type, crossing = datum.split(" ")
             labels = (road_type, crossing)
             image_file = os.path.join(image_dir, image_file)
+
+            if random.random() > 0.3:
+                continue
 
             image = scp.misc.imread(image_file)
 
@@ -124,6 +150,12 @@ def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
 
             output = sess.run([softmax_road, softmax_cross],
                               feed_dict=feed_dict)
+
+            if validation:
+                highway = (np.argmax(output[0][0]) == 0)
+                new_img = road_draw(input_image, highway)
+                image_name = os.path.basename(image_file)
+                image_list.append((image_name, new_img))
 
             for loss in model_list:
 
@@ -155,4 +187,4 @@ def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
         recall[loss] = tp / (total_posnum[loss] + 0.000001)
 
     return {'accuricy': accuricy, 'precision': precision,
-            'recall': recall, 'dt': dt}
+            'recall': recall, 'dt': dt, 'image_list': image_list}

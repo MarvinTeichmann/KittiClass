@@ -39,7 +39,7 @@ flags.DEFINE_string('name', None,
 flags.DEFINE_string('project', None,
                     'Append a name Tag to run.')
 
-flags.DEFINE_string('hypes', 'hypes/road.json',
+flags.DEFINE_string('hypes', None,
                     'File storing model parameters.')
 
 tf.app.flags.DEFINE_boolean(
@@ -51,6 +51,20 @@ tf.app.flags.DEFINE_boolean(
 def main(_):
     utils.set_gpus_to_use()
 
+    try:
+        import tensorvision.train
+        import tensorflow_fcn.utils
+    except ImportError:
+        logging.error("Could not import the submodules.")
+        logging.error("Please execute:"
+                      "'git submodule update --init --recursive'")
+        exit(1)
+
+    if tf.app.flags.FLAGS.hypes is None:
+        logging.error("No hype file is given.")
+        logging.info("Usage: python train.py --hypes hypes/KittiClass.json")
+        exit(1)
+
     with open(tf.app.flags.FLAGS.hypes, 'r') as f:
         logging.info("f: %s", f)
         hypes = json.load(f)
@@ -58,7 +72,7 @@ def main(_):
 
     if 'TV_DIR_RUNS' in os.environ:
         os.environ['TV_DIR_RUNS'] = os.path.join(os.environ['TV_DIR_RUNS'],
-                                                 'road_class')
+                                                 'KittiClass')
     utils.set_dirs(hypes, tf.app.flags.FLAGS.hypes)
 
     utils._add_paths_to_sys(hypes)
