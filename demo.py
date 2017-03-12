@@ -214,7 +214,6 @@ def main(_):
     scp.misc.imsave(out_image_name, new_img)
 
     logging.info("")
-    logging.info("Raw Softmax outputs are: {}".format(output[0][0]))
     logging.info("Output image has been saved to: {}".format(
         os.path.realpath(out_image_name)))
 
