@@ -9,13 +9,15 @@
   "path": ["../incl"],
 
   "data": {
-    "train_file" : "classification/train_all.txt",
-    "val_file" : "classification/test.txt"
+    "train_file" : "classification/train4.txt",
+    "val_file" : "classification/val4.txt",
+    "semantic": true,
+    "positive_classnames": ["trunk", "motorway", "primary"]
   },
  
   "arch": {
     "num_channels" : 3,
-    "inner_channels" : 300,
+    "inner_channels" : 100,
     "deep_channels" : 512,
     "whitening": false
   },
@@ -27,16 +29,17 @@
     "upper_size": 1.7,
     "sig": 0.15,
     "res_chance": 0.7,
-    "fix_shape": true,
+    "fix_shape": false,
+    "resize_image": true,
     "image_height" : 384,
     "image_width" : 1248,
 
-    "augment_level": 0
+    "augment_level": 1
   },
 
   "logging": {
     "display_iter": 40,
-    "eval_iter": 200,
+    "eval_iter": 300,
     "write_iter": 1000,
     "save_iter": 2000,
     "image_iter": 10000
@@ -49,7 +52,7 @@
       "threads": 4,
       "learning_rate": 1e-5,
       "learning_rate_step": null,
-      "max_steps": 20000
+      "max_steps": 16000
   },
   "use_fcn": false,
   "use_fc": false,
@@ -59,5 +62,5 @@
   "grid_height": 12,
   "clip_norm" : 1.0,
   "wd": 5e-4,
-  "down_score": 0.1
+  "down_score": 1
 }

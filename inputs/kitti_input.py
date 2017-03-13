@@ -44,19 +44,36 @@ def _load_gt_file(hypes, data_file=None):
     base_path = os.path.realpath(os.path.dirname(data_file))
     files = [line.rstrip() for line in open(data_file)]
 
+    pos_list = []
+    neg_list = []
+
+    pos_names = hypes['data']['positive_classnames']
+
+    for file in files:
+        image_file, label_name = file.split(" ")
+        label_name = label_name.rstrip()
+        image_file = os.path.join(base_path, image_file)
+        class_id = 0
+        for name in pos_names:
+            if label_name == name:
+                class_id = 1
+        if class_id == 0:
+            neg_list.append(image_file)
+        else:
+            pos_list.append(image_file)
+
+    print("Num positive classes: {}".format(len(pos_list)))
+    print("Num negative classes: {}".format(len(neg_list)))
+
     for epoche in itertools.count():
-        shuffle(files)
-        for file in files:
-            image_file, road_type, crossing = file.split(" ")
-            image_file = os.path.join(base_path, image_file)
-            assert os.path.exists(image_file), \
-                "File does not exist: %s" % image_file
+        shuffle(pos_list)
+        shuffle(neg_list)
+        for pos_example, neg_example in zip(pos_list, neg_list):
+            image = scipy.misc.imread(pos_example)
+            yield image, 1
 
-            image = scipy.misc.imread(image_file)
-            # Please update Scipy, if mode='RGB' is not avaible
-            label = np.array([int(road_type), int(crossing)])
-
-            yield image, label
+            image = scipy.misc.imread(neg_example)
+            yield image, 0
 
 
 def _make_data_gen(hypes, phase, data_dir):
@@ -107,7 +124,13 @@ def jitter_input(hypes, image, label):
     if jitter['fix_shape']:
         image_height = jitter['image_height']
         image_width = jitter['image_width']
-        image = resize_image(image, image_height, image_width)
+        image = resize_image_with_pad(image, image_height, image_width)
+
+    if jitter['resize_image']:
+        image_height = jitter['image_height']
+        image_width = jitter['image_width']
+        image = scipy.misc.imresize(image, size=(image_height, image_width),
+                                    interp='cubic')
 
     return image, label
 
@@ -170,7 +193,7 @@ def resize_label_image_with_pad(image, label, image_height, image_width):
     return new_image, new_label
 
 
-def resize_image(image, image_height, image_width):
+def resize_image_with_pad(image, image_height, image_width):
     shape = image.shape
     assert(image_height >= shape[0])
     assert(image_width >= shape[1])
@@ -191,12 +214,15 @@ def create_queues(hypes, phase):
     arch = hypes['arch']
     dtypes = [tf.float32, tf.int32]
 
-    if hypes['jitter']['fix_shape']:
+    shape_known = hypes['jitter']['fix_shape'] or \
+        hypes['jitter']['resize_image']
+
+    if shape_known:
         height = hypes['jitter']['image_height']
         width = hypes['jitter']['image_width']
         channel = hypes['arch']['num_channels']
         shapes = [[height, width, channel],
-                  [2]]
+                  []]
     else:
         shapes = None
 
@@ -234,7 +260,8 @@ def start_enqueuing_threads(hypes, q, phase, sess):
         num_threads = 1
     for i in range(num_threads):
         t = threading.Thread(target=enqueue_loop,
-                             args=(sess, enqueue_op, phase, gen))
+                             args=(sess, enqueue_op,
+                                   phase, gen))
         t.daemon = True
         t.start()
 
@@ -305,7 +332,10 @@ def inputs(hypes, q, phase):
     if phase == 'val':
         assert(False)
 
-    if not hypes['jitter']['fix_shape']:
+    shape_known = hypes['jitter']['fix_shape'] or \
+        hypes['jitter']['resize_image']
+
+    if not shape_known:
         image, label = q.dequeue()
         nc = hypes["arch"]["num_classes"]
         label.set_shape([None, None, nc])
@@ -348,7 +378,7 @@ def main():
 
     with tf.Session() as sess:
         # Run the Op to initialize the variables.
-        init = tf.global_variables_initializer()
+        init = tf.initialize_all_variables()
         sess.run(init)
         coord = tf.train.Coordinator()
         start_enqueuing_threads(hypes, q, sess, data_dir)

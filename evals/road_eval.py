@@ -9,51 +9,25 @@ from __future__ import print_function
 import os
 import numpy as np
 import scipy as scp
+import scipy.misc
 import random
 
 import tensorflow as tf
 import time
 
-from PIL import Image, ImageDraw, ImageFont
 
-
-def road_draw(image, highway):
-    im = Image.fromarray(image.astype('uint8'))
-    draw = ImageDraw.Draw(im)
-
-    fnt = ImageFont.truetype('FreeMono/FreeMonoBold.ttf', 40)
-
-    shape = image.shape
-
-    if highway:
-        draw.text((65, 10), "Highway",
-                  font=fnt, fill=(255, 255, 0, 255))
-
-        draw.ellipse([10, 10, 55, 55], fill=(255, 255, 0, 255),
-                     outline=(255, 255, 0, 255))
-    else:
-        draw.text((65, 10), "small road",
-                  font=fnt, fill=(255, 0, 0, 255))
-
-        draw.ellipse([10, 10, 55, 55], fill=(255, 0, 0, 255),
-                     outline=(255, 0, 0, 255))
-
-    return np.array(im).astype('float32')
-
-
-def eval_res(hypes, labels, output, loss):
-    index = {'road': 0, 'cross': 1}[loss]
+def eval_res(hypes, class_id, output, loss):
     pos_num = 0
     neg_num = 0
     fn = 0
     fp = 0
-    if(labels[index] == '0'):
+    if(class_id == 0):
         neg_num = 1
-        if(np.argmax(output[index]) == 1):
+        if(np.argmax(output) == 1):
             fp = 1
     else:
         pos_num = 1
-        if(np.argmax(output[index]) == 0):
+        if(np.argmax(output) == 0):
             fn = 1
 
     return fn, fp, pos_num, neg_num
@@ -71,14 +45,18 @@ def evaluate(hypes, sess, image_pl, inf_out):
     eval_list = []
 
     for loss in model_list:
-        eval_list.append(('%s  val Accuricy' % loss,
-                          100*val['accuricy'][loss]))
+        eval_list.append(('%s  val mean_accuracy' % loss,
+                          100*val['mean_accuracy'][loss]))
+        eval_list.append(('%s  val accuracy' % loss,
+                          100*val['accuracy'][loss]))
         eval_list.append(('%s  val Precision' % loss,
                           100*val['precision'][loss]))
         eval_list.append(('%s  val Recall' % loss,
                           100*val['recall'][loss]))
-        eval_list.append(('%s  train Accuricy' % loss,
-                          100*train['accuricy'][loss]))
+        eval_list.append(('%s  train mean_accuracy' % loss,
+                          100*train['mean_accuracy'][loss]))
+        eval_list.append(('%s  train accuracy' % loss,
+                          100*train['accuracy'][loss]))
         eval_list.append(('%s  train Precision' % loss,
                           100*train['precision'][loss]))
         eval_list.append(('%s  train Recall' % loss,
@@ -86,14 +64,15 @@ def evaluate(hypes, sess, image_pl, inf_out):
     eval_list.append(('Speed (msec)', 1000*val['dt']))
     eval_list.append(('Speed (fps)', 1/val['dt']))
 
-    return eval_list, val['image_list']
+    image_list = []
+
+    return eval_list, image_list
 
 
 def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
 
-    softmax_road, softmax_cross = inf_out['softmax']
+    softmax_road = inf_out['softmax']
     data_dir = hypes['dirs']['data_dir']
-    image_list = []
     if validation is True:
         data_file = hypes['data']['val_file']
     else:
@@ -119,12 +98,17 @@ def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
     with open(data_file) as file:
         for i, datum in enumerate(file):
             datum = datum.rstrip()
-            image_file, road_type, crossing = datum.split(" ")
-            labels = (road_type, crossing)
-            image_file = os.path.join(image_dir, image_file)
+            image_file, label_name = datum.split(" ")
+            pos_names = hypes['data']['positive_classnames']
 
-            if random.random() > 0.3:
+            if not validation and random.random() > 0.1:
                 continue
+
+            image_file = os.path.join(image_dir, image_file)
+            class_id = 0
+            for name in pos_names:
+                if label_name == name:
+                    class_id = 1
 
             image = scp.misc.imread(image_file)
 
@@ -141,6 +125,13 @@ def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
                 new_image[offset_x:offset_x+shape[0],
                           offset_y:offset_y+shape[1]] = image
                 input_image = new_image
+            elif hypes['jitter']['resize_image']:
+                image_height = hypes['jitter']['image_height']
+                image_width = hypes['jitter']['image_width']
+                image = scp.misc.imresize(
+                    image, size=(image_height, image_width),
+                    interp='cubic')
+                input_image = image
             else:
                 input_image = image
 
@@ -148,18 +139,12 @@ def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
 
             feed_dict = {image_pl: input_image}
 
-            output = sess.run([softmax_road, softmax_cross],
+            output = sess.run(softmax_road,
                               feed_dict=feed_dict)
-
-            if validation:
-                highway = (np.argmax(output[0][0]) == 0)
-                new_img = road_draw(input_image, highway)
-                image_name = os.path.basename(image_file)
-                image_list.append((image_name, new_img))
 
             for loss in model_list:
 
-                FN, FP, posNum, negNum = eval_res(hypes, labels, output,
+                FN, FP, posNum, negNum = eval_res(hypes, class_id, output,
                                                   loss)
 
                 total_fp[loss] += FP
@@ -170,21 +155,25 @@ def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
     if validation:
         start_time = time.time()
         for i in xrange(10):
-            sess.run([softmax_road, softmax_cross], feed_dict=feed_dict)
+            sess.run([softmax_road], feed_dict=feed_dict)
         dt = (time.time() - start_time)/10
     else:
         dt = None
 
-    accuricy = {}
+    accuracy = {}
     precision = {}
     recall = {}
+    mean_accuracy = {}
 
     for loss in model_list:
         tp = total_posnum[loss] - total_fn[loss]
         tn = total_negnum[loss] - total_fp[loss]
-        accuricy[loss] = (tp + tn) / (total_posnum[loss] + total_negnum[loss])
+        mean_acc = 0.5 * (tp / total_posnum[loss] + tn / total_negnum[loss])
+        mean_accuracy[loss] = mean_acc
+        accuracy[loss] = (tp + tn) / (total_posnum[loss] + total_negnum[loss])
         precision[loss] = tp / (tp + total_fp[loss] + 0.000001)
         recall[loss] = tp / (total_posnum[loss] + 0.000001)
 
-    return {'accuricy': accuricy, 'precision': precision,
-            'recall': recall, 'dt': dt, 'image_list': image_list}
+    return {'mean_accuracy': mean_accuracy,
+            'accuracy': accuracy, 'precision': precision,
+            'recall': recall, 'dt': dt}
