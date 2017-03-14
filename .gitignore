@@ -6,6 +6,10 @@ __pycache__/
 # C extensions
 *.so
 
+run*.sh
+
+hypes/*.*.json
+
 sftp-config.json
 
 # Distribution / packaging

@@ -69,6 +69,64 @@ def evaluate(hypes, sess, image_pl, inf_out):
     return eval_list, image_list
 
 
+def central_crop(image, target_height, target_width):
+    old_width = image.shape[1]
+    old_height = image.shape[0]
+    assert(old_width >= target_width)
+    assert(old_height >= target_height)
+    offset_x = (old_height-target_height)
+    offset_y = (old_width-target_width)
+    image = image[offset_x:offset_x+target_height,
+                  offset_y:offset_y+target_width]
+
+    assert(image.shape[0] == target_height)
+    assert(image.shape[1] == target_width)
+
+    return image
+
+
+def random_crop(image, height, width):
+    old_width = image.shape[1]
+    old_height = image.shape[0]
+    assert(old_width >= width)
+    assert(old_height >= height)
+    max_x = max(old_height-height, 0)
+    max_y = max(old_width-width, 0)
+    offset_x = random.randint(0, max_x)
+    offset_y = random.randint(0, max_y)
+    image = image[offset_x:offset_x+height, offset_y:offset_y+width]
+
+    assert(image.shape[0] == height)
+    assert(image.shape[1] == width)
+
+    return image
+
+
+def resize_input(hypes, image):
+
+    jitter = hypes['jitter']
+
+    if jitter['resize_image']:
+        image_height = jitter['initial_height']
+        image_width = jitter['initial_width']
+        image = scipy.misc.imresize(image, size=(image_height, image_width),
+                                    interp='cubic')
+
+    if jitter['central_crop']:
+        image_height = jitter['crop_height']
+        image_width = jitter['crop_width']
+        image = central_crop(image, image_height, image_width)
+
+    if jitter['random_crop']:
+        image_height = jitter['rcrop_height']
+        image_width = jitter['rcrop_width']
+        image = random_crop(image, image_height, image_width)
+
+    assert image.shape == (224, 224, 3)
+
+    return image
+
+
 def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
 
     softmax_road = inf_out['softmax']
@@ -125,6 +183,8 @@ def evaluate_data(hypes, sess, image_pl, inf_out, validation=True):
                 new_image[offset_x:offset_x+shape[0],
                           offset_y:offset_y+shape[1]] = image
                 input_image = new_image
+            elif "low_res" in hypes['jitter']:
+                input_image = resize_input(hypes, image)
             elif hypes['jitter']['resize_image']:
                 image_height = hypes['jitter']['image_height']
                 image_width = hypes['jitter']['image_width']

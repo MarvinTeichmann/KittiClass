@@ -1,0 +1,68 @@
+{
+  "model": {
+    "input_file": "../inputs/kitti_low_input.py",
+    "architecture_file" : "../encoder/vgg.py",
+    "objective_file" : "../decoder/low_res.py",
+    "optimizer_file" : "../optimizer/generic_optimizer.py",
+    "evaluator_file" : "../evals/road_eval.py"
+  },
+  "path": ["../incl"],
+
+  "data": {
+    "train_file" : "classification/train4.txt",
+    "val_file" : "classification/val4.txt",
+    "semantic": true,
+    "positive_classnames": ["trunk", "motorway", "primary"]
+  },
+ 
+  "arch": {
+    "num_channels" : 3,
+    "inner_channels" : 100,
+    "layers" : 101,
+    "use_crop": false,
+    "inner_kernel": 1,
+    "deep_channels" : 512,
+    "whitening": false
+  },
+
+  "jitter": {
+    "low_res": true,
+    "resize_image": true,
+    "initial_height" : 256,
+    "initial_width" : 832,
+    "central_crop": false,
+    "crop_height": 256,
+    "crop_width": 256,
+    "random_crop": true,
+    "rcrop_height": 224,
+    "rcrop_width": 224,
+    "fix_shape": false,
+    "augment_level": 1
+  },
+
+  "logging": {
+    "display_iter": 40,
+    "eval_iter": 300,
+    "write_iter": 1000,
+    "save_iter": 2000,
+    "image_iter": 10000
+  },
+
+  "solver": {
+      "opt": "Adam",
+      "batch_size": 1,
+      "epsilon": 0.00001,
+      "threads": 4,
+      "learning_rate": 1e-5,
+      "learning_rate_step": null,
+      "max_steps": 16000
+  },
+  "road_classes": 2,
+  "grid_width": 39,
+  "grid_height": 12,
+  "only_road": true,
+  "load_pretrained": true,
+  "clip_norm" : 1.0,
+  "wd": 5e-4,
+  "down_score": 1
+}

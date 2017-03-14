@@ -11,6 +11,8 @@ import logging
 import os
 import sys
 
+import collections
+
 # configure logging
 if 'TV_IS_DEV' in os.environ and os.environ['TV_IS_DEV']:
     logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s',
@@ -42,10 +44,30 @@ flags.DEFINE_string('project', None,
 flags.DEFINE_string('hypes', None,
                     'File storing model parameters.')
 
+flags.DEFINE_string('mod', None,
+                    'Modifier for model parameters.')
+
 tf.app.flags.DEFINE_boolean(
     'save', True, ('Whether to save the run. In case --nosave (default) '
                    'output will be saved to the folder TV_DIR_RUNS/debug, '
                    'hence it will get overwritten by further runs.'))
+
+
+def dict_merge(dct, merge_dct):
+    """ Recursive dict merge. Inspired by :meth:``dict.update()``, instead of
+    updating only top-level keys, dict_merge recurses down into dicts nested
+    to an arbitrary depth, updating keys. The ``merge_dct`` is merged into
+    ``dct``.
+    :param dct: dict onto which the merge is executed
+    :param merge_dct: dct merged into dct
+    :return: None
+    """
+    for k, v in merge_dct.iteritems():
+        if (k in dct and isinstance(dct[k], dict) and
+                isinstance(merge_dct[k], collections.Mapping)):
+            dict_merge(dct[k], merge_dct[k])
+        else:
+            dct[k] = merge_dct[k]
 
 
 def main(_):
@@ -69,6 +91,11 @@ def main(_):
         logging.info("f: %s", f)
         hypes = json.load(f)
     utils.load_plugins()
+
+    if tf.app.flags.FLAGS.mod is not None:
+        import ast
+        mod_dict = ast.literal_eval(tf.app.flags.FLAGS.mod)
+        dict_merge(hypes, mod_dict)
 
     if 'TV_DIR_RUNS' in os.environ:
         os.environ['TV_DIR_RUNS'] = os.path.join(os.environ['TV_DIR_RUNS'],
