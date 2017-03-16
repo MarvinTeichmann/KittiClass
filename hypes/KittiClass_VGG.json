@@ -17,9 +17,9 @@
  
   "arch": {
     "num_channels" : 3,
-    "inner_channels" : 100,
+    "inner_channels" : 30,
     "use_crop": false,
-    "inner_kernel": 1,
+    "inner_kernel": 3,
     "deep_channels" : 512,
     "whitening": false
   },
@@ -49,7 +49,7 @@
 
   "solver": {
       "opt": "Adam",
-      "batch_size": 1,
+      "batch_size": 5,
       "epsilon": 0.00001,
       "threads": 4,
       "learning_rate": 1e-5,

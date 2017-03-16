@@ -32,17 +32,6 @@ UPDATE_OPS_COLLECTION = tf.GraphKeys.UPDATE_OPS
 # must be grouped with training op
 IMAGENET_MEAN_BGR = [103.062623801, 115.902882574, 123.151630838, ]
 
-FLAGS = tf.app.flags.FLAGS
-tf.app.flags.DEFINE_string('train_dir', '/tmp/resnet_train',
-                           """Directory where to write event logs """
-                           """and checkpoint.""")
-tf.app.flags.DEFINE_float('learning_rate', 0.1, "learning rate.")
-tf.app.flags.DEFINE_integer('batch_size', 16, "batch size")
-tf.app.flags.DEFINE_integer('input_size', 224, "input image size")
-tf.app.flags.DEFINE_boolean('continue', False,
-                            'resume from latest saved state')
-
-
 network_file = os.path.join("tensorflow_resnet_convert_1.1",
                             "ResNet-L101.ckpt")
 
@@ -77,25 +66,29 @@ def inference(hypes, images, train=True,
 
     with tf.variable_scope('scale1'):
         x = _conv(x, 64, ksize=7, stride=2)
-        x = _bn(x, is_training)
+        x = _bn(x, is_training, hypes)
         x = _relu(x)
         scale1 = x
 
     with tf.variable_scope('scale2'):
         x = _max_pool(x, ksize=3, stride=2)
-        x = stack(x, num_blocks[0], 64, bottleneck, is_training, stride=1)
+        x = stack(x, num_blocks[0], 64, bottleneck, is_training, stride=1,
+                  hypes=hypes)
         scale2 = x
 
     with tf.variable_scope('scale3'):
-        x = stack(x, num_blocks[1], 128, bottleneck, is_training, stride=2)
+        x = stack(x, num_blocks[1], 128, bottleneck, is_training, stride=2,
+                  hypes=hypes)
         scale3 = x
 
     with tf.variable_scope('scale4'):
-        x = stack(x, num_blocks[2], 256, bottleneck, is_training, stride=2)
+        x = stack(x, num_blocks[2], 256, bottleneck, is_training, stride=2,
+                  hypes=hypes)
         scale4 = x
 
     with tf.variable_scope('scale5'):
-        x = stack(x, num_blocks[3], 512, bottleneck, is_training, stride=2)
+        x = stack(x, num_blocks[3], 512, bottleneck, is_training, stride=2,
+                  hypes=hypes)
         scale5 = x
 
     logits['deep_feat'] = scale5
@@ -153,7 +146,8 @@ def _imagenet_preprocess(rgb):
     return bgr
 
 
-def stack(x, num_blocks, filters_internal, bottleneck, is_training, stride):
+def stack(x, num_blocks, filters_internal, bottleneck, is_training, stride,
+          hypes):
     for n in range(num_blocks):
         s = stride if n == 0 else 1
         with tf.variable_scope('block%d' % (n + 1)):
@@ -161,11 +155,12 @@ def stack(x, num_blocks, filters_internal, bottleneck, is_training, stride):
                       filters_internal,
                       bottleneck=bottleneck,
                       is_training=is_training,
-                      stride=s)
+                      stride=s,
+                      hypes=hypes)
     return x
 
 
-def block(x, filters_internal, is_training, stride, bottleneck):
+def block(x, filters_internal, is_training, stride, bottleneck, hypes):
     filters_in = x.get_shape()[-1]
 
     # Note: filters_out isn't how many filters are outputed.
@@ -183,31 +178,31 @@ def block(x, filters_internal, is_training, stride, bottleneck):
     if bottleneck:
         with tf.variable_scope('a'):
             x = _conv(x, filters_internal, ksize=1, stride=stride)
-            x = _bn(x, is_training)
+            x = _bn(x, is_training, hypes)
             x = _relu(x)
 
         with tf.variable_scope('b'):
             x = _conv(x, filters_internal, ksize=3, stride=1)
-            x = _bn(x, is_training)
+            x = _bn(x, is_training, hypes)
             x = _relu(x)
 
         with tf.variable_scope('c'):
             x = _conv(x, filters_out, ksize=1, stride=1)
-            x = _bn(x, is_training)
+            x = _bn(x, is_training, hypes)
     else:
         with tf.variable_scope('A'):
             x = _conv(x, filters_internal, ksize=3, stride=stride)
-            x = _bn(x, is_training)
+            x = _bn(x, is_training, hypes)
             x = _relu(x)
 
         with tf.variable_scope('B'):
             x = _conv(x, filters_out, ksize=3, stride=1)
-            x = _bn(x, is_training)
+            x = _bn(x, is_training, hypes)
 
     with tf.variable_scope('shortcut'):
         if filters_out != filters_in or stride != 1:
             shortcut = _conv(shortcut, filters_out, ksize=1, stride=stride)
-            shortcut = _bn(shortcut, is_training)
+            shortcut = _bn(shortcut, is_training, hypes)
 
     return _relu(x + shortcut)
 
@@ -216,7 +211,7 @@ def _relu(x):
     return tf.nn.relu(x)
 
 
-def _bn(x, is_training):
+def _bn(x, is_training, hypes):
     x_shape = x.get_shape()
     params_shape = x_shape[-1:]
     axis = list(range(len(x_shape) - 1))
@@ -239,16 +234,21 @@ def _bn(x, is_training):
 
     # These ops will only be preformed when training.
     mean, variance = tf.nn.moments(x, axis)
-    update_moving_mean = moving_averages.assign_moving_average(moving_mean,
-                                                               mean, BN_DECAY)
-    update_moving_variance = moving_averages.assign_moving_average(
-        moving_variance, variance, BN_DECAY)
-    tf.add_to_collection(UPDATE_OPS_COLLECTION, update_moving_mean)
-    tf.add_to_collection(UPDATE_OPS_COLLECTION, update_moving_variance)
 
-    mean, variance = control_flow_ops.cond(
-        is_training, lambda: (mean, variance),
-        lambda: (moving_mean, moving_variance))
+    if hypes['use_moving_average_bn']:
+        update_moving_mean = moving_averages.assign_moving_average(moving_mean,
+                                                                   mean,
+                                                                   BN_DECAY)
+        update_moving_variance = moving_averages.assign_moving_average(
+            moving_variance, variance, BN_DECAY)
+        tf.add_to_collection(UPDATE_OPS_COLLECTION, update_moving_mean)
+        tf.add_to_collection(UPDATE_OPS_COLLECTION, update_moving_variance)
+
+        mean, variance = control_flow_ops.cond(
+            is_training, lambda: (mean, variance),
+            lambda: (moving_mean, moving_variance))
+    else:
+        mean, variance = mean, variance
 
     x = tf.nn.batch_normalization(x, mean, variance, beta, gamma, BN_EPSILON)
     # x.set_shape(inputs.get_shape()) ??
