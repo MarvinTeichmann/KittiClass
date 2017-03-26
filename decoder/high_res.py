@@ -199,9 +199,10 @@ def decoder(hypes, logits, train):
             hypes["hidden_shape"] = hidden.get_shape()
             hidden = tf.reshape(hidden, [batch_size, -1])
         else:
-            hidden.set_shape([1, hypes["hidden_shape"][1],
-                              hypes["hidden_shape"][2],
-                              hypes["hidden_shape"][3]])
+            if "hidden_shape" in hypes:
+                hidden.set_shape([1, hypes["hidden_shape"][1],
+                                  hypes["hidden_shape"][2],
+                                  hypes["hidden_shape"][3]])
             hidden = tf.reshape(hidden, [1, -1])
 
         num_classes = hypes["road_classes"]
